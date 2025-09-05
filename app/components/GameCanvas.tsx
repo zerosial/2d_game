@@ -22,6 +22,9 @@ export default function GameCanvas() {
   const goldRef = useRef<HTMLSpanElement | null>(null);
   const expRef = useRef<HTMLSpanElement | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const overlayContentRef = useRef<HTMLDivElement | null>(null);
+  const overlayCloseRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (
@@ -38,7 +41,10 @@ export default function GameCanvas() {
       canvasRef.current,
       goldRef.current,
       expRef.current,
-      statusRef.current
+      statusRef.current,
+      overlayRef.current,
+      overlayContentRef.current,
+      overlayCloseRef.current
     );
     return () => dispose();
   }, []);
@@ -61,6 +67,17 @@ export default function GameCanvas() {
           <div ref={statusRef}></div>
         </div>
       </div>
+      <div className="overlay" ref={overlayRef}>
+        <div className="overlay-box">
+          <div className="overlay-title">오프라인 보상</div>
+          <div className="overlay-content" ref={overlayContentRef}></div>
+          <div className="overlay-actions">
+            <button ref={overlayCloseRef} type="button">
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -73,7 +90,10 @@ function startGame(
   canvasElement: HTMLCanvasElement,
   hudGoldElement: HTMLSpanElement,
   hudExpElement: HTMLSpanElement,
-  hudStatusElement: HTMLDivElement
+  hudStatusElement: HTMLDivElement,
+  overlayEl: HTMLDivElement | null,
+  overlayContentEl: HTMLDivElement | null,
+  overlayCloseBtn: HTMLButtonElement | null
 ) {
   // Constants
   const WORLD_WIDTH = 540;
@@ -97,8 +117,14 @@ function startGame(
   const LIGHTNING_TTL_MS = 120;
   const LIGHTNING_SEGMENT_COUNT = 16;
   const LIGHTNING_JITTER_UNITS = 6;
+  // Persistence keys
+  const PROGRESS_KEY = "idleGame_progress";
+  const HIDDEN_AT_KEY = "idleGame_hiddenAt";
+  const PENDING_MS_KEY = "idleGame_pendingMs";
 
-  const ctx = canvasElement.getContext("2d", { alpha: false });
+  const ctx = canvasElement.getContext("2d", {
+    alpha: false,
+  }) as CanvasRenderingContext2D;
   if (!ctx) return () => {};
 
   const state = {
@@ -121,6 +147,8 @@ function startGame(
 
   // Init
   fitCanvasToContainer();
+  // Load saved progress and apply offline gains
+  tryResumeProgress();
   spawnEnemy();
   updateHud();
 
@@ -131,6 +159,14 @@ function startGame(
   resizeObserver.observe(containerElement);
 
   // DPR change listener (with fallback)
+  type MediaQueryListDeprecated = MediaQueryList & {
+    addListener: (
+      listener: (this: MediaQueryList, ev: MediaQueryListEvent) => void
+    ) => void;
+    removeListener: (
+      listener: (this: MediaQueryList, ev: MediaQueryListEvent) => void
+    ) => void;
+  };
   const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
   const onDprChange = () => {
     state.devicePixelRatio = window.devicePixelRatio || 1;
@@ -138,9 +174,46 @@ function startGame(
   };
   if (typeof mq.addEventListener === "function") {
     mq.addEventListener("change", onDprChange);
-  } else if (typeof (mq as any).addListener === "function") {
-    (mq as any).addListener(onDprChange);
+  } else if (
+    typeof (mq as MediaQueryListDeprecated).addListener === "function"
+  ) {
+    (mq as MediaQueryListDeprecated).addListener(onDprChange);
   }
+
+  // Persist periodically and on tab hide/close
+  const autosaveInterval = window.setInterval(persistProgress, 5000);
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") {
+      // Anchor hidden timestamp for accurate offline time while minimized/tab-switched
+      try {
+        localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
+      } catch {}
+      persistProgress();
+    } else if (document.visibilityState === "visible") {
+      tryResumeProgress();
+      updateHud();
+    }
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("beforeunload", persistProgress);
+  const onPageHide = (_ev: PageTransitionEvent) => {
+    persistProgress();
+  };
+  window.addEventListener("pagehide", onPageHide);
+  const onPageShow = (_ev: PageTransitionEvent) => {
+    tryResumeProgress();
+    updateHud();
+  };
+  window.addEventListener("pageshow", onPageShow);
+  const onFocus = () => {
+    tryResumeProgress();
+    updateHud();
+  };
+  const onBlur = () => {
+    persistProgress();
+  };
+  window.addEventListener("focus", onFocus);
+  window.addEventListener("blur", onBlur);
 
   // Loop
   const loop = (ts: number) => {
@@ -160,10 +233,19 @@ function startGame(
   return () => {
     window.cancelAnimationFrame(state.rafId);
     resizeObserver.disconnect();
+    window.clearInterval(autosaveInterval);
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("beforeunload", persistProgress);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("blur", onBlur);
     if (typeof mq.removeEventListener === "function") {
       mq.removeEventListener("change", onDprChange);
-    } else if (typeof (mq as any).removeListener === "function") {
-      (mq as any).removeListener(onDprChange);
+    } else if (
+      typeof (mq as MediaQueryListDeprecated).removeListener === "function"
+    ) {
+      (mq as MediaQueryListDeprecated).removeListener(onDprChange);
     }
   };
 
@@ -419,5 +501,132 @@ function startGame(
 
   function randomRange(min: number, max: number) {
     return min + Math.random() * (max - min);
+  }
+
+  // ------------------------------
+  // Persistence & Offline Gains
+  // ------------------------------
+  function persistProgress() {
+    try {
+      const payload = {
+        gold: state.stats.gold,
+        exp: state.stats.exp,
+        kills: state.stats.kills,
+        lastTs: Date.now(),
+      };
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
+    } catch {}
+  }
+
+  function tryResumeProgress() {
+    try {
+      const raw = localStorage.getItem(PROGRESS_KEY);
+      const hiddenRaw = localStorage.getItem(HIDDEN_AT_KEY);
+      const data = raw
+        ? (JSON.parse(raw) as {
+            gold: number;
+            exp: number;
+            kills: number;
+            lastTs: number;
+          })
+        : null;
+      const hiddenAt = hiddenRaw ? Number(hiddenRaw) : NaN;
+      const hasHiddenAnchor = Number.isFinite(hiddenAt);
+      if (!data && !hasHiddenAnchor) return;
+
+      // Restore stats
+      if (data) {
+        if (Number.isFinite(data.gold)) state.stats.gold = data.gold;
+        if (Number.isFinite(data.exp)) state.stats.exp = data.exp;
+        if (Number.isFinite(data.kills)) state.stats.kills = data.kills;
+      }
+
+      // Compute offline window
+      const now = Date.now();
+      const baseTs = hasHiddenAnchor
+        ? hiddenAt
+        : data && typeof data.lastTs === "number"
+        ? data.lastTs
+        : now;
+      const elapsedMs = Math.max(0, now - baseTs);
+      if (elapsedMs <= 0) return;
+      const result = simulateOffline(elapsedMs, state.stats.kills);
+      // Always show overlay if any elapsed time; apply gains only if > 0
+      if (result.killsGained > 0) {
+        state.stats.gold += result.goldGained;
+        state.stats.exp += result.expGained;
+        state.stats.kills += result.killsGained;
+      }
+      showOfflineOverlay(
+        result.killsGained,
+        result.goldGained,
+        result.expGained,
+        elapsedMs
+      );
+      // Update persisted time to now
+      localStorage.setItem(
+        PROGRESS_KEY,
+        JSON.stringify({
+          gold: state.stats.gold,
+          exp: state.stats.exp,
+          kills: state.stats.kills,
+          lastTs: now,
+        })
+      );
+      try {
+        localStorage.removeItem(HIDDEN_AT_KEY);
+      } catch {}
+      updateHud();
+    } catch {}
+  }
+
+  // Simulate kills over elapsed time with progressive enemy HP
+  function simulateOffline(elapsedMs: number, startingKills: number) {
+    let timeSpent = 0;
+    let killsGained = 0;
+    let currentKills = startingKills;
+    const damagePerHit = ATTACK_DAMAGE_AMOUNT;
+    const hitInterval = ATTACK_INTERVAL_MS;
+    while (timeSpent < elapsedMs) {
+      const enemyMaxHp =
+        BASE_ENEMY_MAX_HP + currentKills * ENEMY_HP_GROWTH_PER_KILL;
+      const hitsToKill = Math.ceil(enemyMaxHp / damagePerHit);
+      const timeToKillMs = hitsToKill * hitInterval;
+      const cycleMs = timeToKillMs + ENEMY_RESPAWN_DELAY_MS;
+      if (timeSpent + cycleMs > elapsedMs) break;
+      timeSpent += cycleMs;
+      killsGained += 1;
+      currentKills += 1;
+      // Safety cap to avoid extremely long loops
+      if (killsGained > 500000) break;
+    }
+    return {
+      killsGained,
+      goldGained: killsGained * GOLD_REWARD_PER_KILL,
+      expGained: killsGained * EXP_REWARD_PER_KILL,
+    };
+  }
+
+  // Overlay helpers
+  function showOfflineOverlay(
+    kills: number,
+    gold: number,
+    exp: number,
+    elapsedMs: number
+  ) {
+    const el = overlayEl;
+    const content = overlayContentEl;
+    const closeBtn = overlayCloseBtn;
+    if (!el || !content) return;
+    const seconds = Math.floor(elapsedMs / 1000);
+    content.textContent = `${seconds}초 동안 처치 ${kills} / +${gold} G / +${exp} EXP`;
+    el.classList.add("show");
+    if (closeBtn) {
+      const onClose = () => {
+        el.classList.remove("show");
+        closeBtn.removeEventListener("click", onClose);
+      };
+      closeBtn.addEventListener("click", onClose);
+    }
   }
 }
