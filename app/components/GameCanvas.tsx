@@ -120,7 +120,9 @@ function startGame(
   // Persistence keys
   const PROGRESS_KEY = "idleGame_progress";
   const HIDDEN_AT_KEY = "idleGame_hiddenAt";
-  const PENDING_MS_KEY = "idleGame_pendingMs";
+  const LAST_ACTIVE_KEY = "idleGame_lastActiveMs";
+  // Cooldown to prevent duplicate resume processing (focus + pageshow + visible)
+  let resumeCooldownUntil = 0;
 
   const ctx = canvasElement.getContext("2d", {
     alpha: false,
@@ -132,6 +134,7 @@ function startGame(
     viewportScale: 1,
     lastFrameTimeMs: undefined as number | undefined,
     currentTimeMs: 0,
+    lastWallClockMs: Date.now(),
     hero: {
       x: WORLD_WIDTH / 2,
       y: WORLD_HEIGHT * 0.66,
@@ -195,21 +198,37 @@ function startGame(
     }
   };
   document.addEventListener("visibilitychange", onVisibility);
-  window.addEventListener("beforeunload", persistProgress);
+  const onBeforeUnload = (_ev: BeforeUnloadEvent) => {
+    try {
+      localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
+    } catch {}
+    persistProgress();
+  };
+  window.addEventListener("beforeunload", onBeforeUnload);
   const onPageHide = (_ev: PageTransitionEvent) => {
+    try {
+      localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
+    } catch {}
     persistProgress();
   };
   window.addEventListener("pagehide", onPageHide);
   const onPageShow = (_ev: PageTransitionEvent) => {
+    if (performance.now() < resumeCooldownUntil) return;
+    resumeCooldownUntil = performance.now() + 1200;
     tryResumeProgress();
     updateHud();
   };
   window.addEventListener("pageshow", onPageShow);
   const onFocus = () => {
+    if (performance.now() < resumeCooldownUntil) return;
+    resumeCooldownUntil = performance.now() + 1200;
     tryResumeProgress();
     updateHud();
   };
   const onBlur = () => {
+    try {
+      localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
+    } catch {}
     persistProgress();
   };
   window.addEventListener("focus", onFocus);
@@ -226,6 +245,7 @@ function startGame(
     update(deltaSeconds, deltaMs);
     render();
     state.rafId = window.requestAnimationFrame(loop);
+    state.lastWallClockMs = Date.now();
   };
   state.rafId = window.requestAnimationFrame(loop);
 
@@ -235,7 +255,7 @@ function startGame(
     resizeObserver.disconnect();
     window.clearInterval(autosaveInterval);
     document.removeEventListener("visibilitychange", onVisibility);
-    window.removeEventListener("beforeunload", persistProgress);
+    window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("pagehide", onPageHide);
     window.removeEventListener("pageshow", onPageShow);
     window.removeEventListener("focus", onFocus);
@@ -515,6 +535,9 @@ function startGame(
         lastTs: Date.now(),
       };
       localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
+      try {
+        localStorage.setItem(LAST_ACTIVE_KEY, String(Date.now()));
+      } catch {}
     } catch {}
   }
 
@@ -531,6 +554,8 @@ function startGame(
           })
         : null;
       const hiddenAt = hiddenRaw ? Number(hiddenRaw) : NaN;
+      const lastActiveRaw = localStorage.getItem(LAST_ACTIVE_KEY);
+      const savedLastActive = lastActiveRaw ? Number(lastActiveRaw) : NaN;
       const hasHiddenAnchor = Number.isFinite(hiddenAt);
       if (!data && !hasHiddenAnchor) return;
 
@@ -543,11 +568,12 @@ function startGame(
 
       // Compute offline window
       const now = Date.now();
-      const baseTs = hasHiddenAnchor
-        ? hiddenAt
+      const lastActive = Number.isFinite(savedLastActive)
+        ? savedLastActive
         : data && typeof data.lastTs === "number"
         ? data.lastTs
-        : now;
+        : state.lastWallClockMs;
+      const baseTs = hasHiddenAnchor ? hiddenAt : lastActive;
       const elapsedMs = Math.max(0, now - baseTs);
       if (elapsedMs <= 0) return;
       const result = simulateOffline(elapsedMs, state.stats.kills);
