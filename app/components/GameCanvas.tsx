@@ -102,6 +102,20 @@ function startGame(
   const HERO_RADIUS = 14;
   const ENEMY_RADIUS = 16;
 
+  // Pixel-art rendering
+  type HeroAnimState = "idle" | "move" | "attack";
+  const HERO_SPRITE_SIZE_UNITS = 28; // Rendered size in world units
+  const ATTACK_ANIMATION_TTL_MS = 220;
+  const ANIM_META: Record<
+    HeroAnimState,
+    { frames: number; frameDurationMs: number }
+  > = {
+    idle: { frames: 2, frameDurationMs: 480 },
+    move: { frames: 4, frameDurationMs: 120 },
+    attack: { frames: 4, frameDurationMs: 90 },
+  };
+  const SPRITE_FRAME_PX = 16; // Expected frame size if external sprites are provided
+
   const HERO_SPEED_UNITS_PER_SECOND = 140;
   const ATTACK_RANGE_UNITS = 140;
   const ATTACK_INTERVAL_MS = 600;
@@ -117,6 +131,7 @@ function startGame(
   const LIGHTNING_TTL_MS = 120;
   const LIGHTNING_SEGMENT_COUNT = 16;
   const LIGHTNING_JITTER_UNITS = 6;
+  const OVERLAY_TOGGLE_KEY = "idleGame_offlineOverlayEnabled";
   // Persistence keys
   const PROGRESS_KEY = "idleGame_progress";
   const HIDDEN_AT_KEY = "idleGame_hiddenAt";
@@ -140,6 +155,12 @@ function startGame(
       y: WORLD_HEIGHT * 0.66,
       radius: HERO_RADIUS,
       attackCooldownMs: 0,
+      animation: {
+        current: "idle" as HeroAnimState,
+        frameIndex: 0,
+        frameElapsedMs: 0,
+        attackAnimMs: 0,
+      },
     },
     enemy: null as Enemy,
     pendingRespawnAtMs: 0,
@@ -147,6 +168,18 @@ function startGame(
     effects: [] as LightningEffect[],
     rafId: 0 as number | 0,
   };
+
+  // Optional external sprite resources (loaded if present under /public/sprites)
+  type SpriteResource = {
+    image: HTMLImageElement;
+    frameSize: number;
+    frames: number;
+    loaded: boolean;
+  };
+  const sprites: Partial<Record<HeroAnimState, SpriteResource>> = {};
+  sprites.idle = tryLoadSprite("/sprites/hero_idle.png", SPRITE_FRAME_PX);
+  sprites.move = tryLoadSprite("/sprites/hero_walk.png", SPRITE_FRAME_PX);
+  sprites.attack = tryLoadSprite("/sprites/hero_attack.png", SPRITE_FRAME_PX);
 
   // Init
   fitCanvasToContainer();
@@ -198,21 +231,21 @@ function startGame(
     }
   };
   document.addEventListener("visibilitychange", onVisibility);
-  const onBeforeUnload = (_ev: BeforeUnloadEvent) => {
+  const onBeforeUnload = () => {
     try {
       localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
     } catch {}
     persistProgress();
   };
   window.addEventListener("beforeunload", onBeforeUnload);
-  const onPageHide = (_ev: PageTransitionEvent) => {
+  const onPageHide = () => {
     try {
       localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
     } catch {}
     persistProgress();
   };
   window.addEventListener("pagehide", onPageHide);
-  const onPageShow = (_ev: PageTransitionEvent) => {
+  const onPageShow = () => {
     if (performance.now() < resumeCooldownUntil) return;
     resumeCooldownUntil = performance.now() + 1200;
     tryResumeProgress();
@@ -293,6 +326,7 @@ function startGame(
     const dy = state.enemy.y - hero.y;
     const distance = Math.hypot(dx, dy);
     const inRange = distance <= ATTACK_RANGE_UNITS;
+    let moveDistanceThisFrame = 0;
 
     if (inRange) {
       hudStatusElement.textContent = "공격 중";
@@ -312,11 +346,13 @@ function startGame(
         hero.x += dx * invLen * moveDistance;
         hero.y += dy * invLen * moveDistance;
       }
+      moveDistanceThisFrame = moveDistance;
       if (hero.attackCooldownMs > 0) {
         hero.attackCooldownMs = Math.max(0, hero.attackCooldownMs - deltaMs);
       }
     }
 
+    updateHeroAnimation(inRange, moveDistanceThisFrame, deltaMs);
     updateEffects(deltaMs);
   }
 
@@ -329,6 +365,8 @@ function startGame(
     if (enemy.hp <= 0) {
       handleEnemyDefeated();
     }
+    // Trigger attack animation window
+    hero.animation.attackAnimMs = ATTACK_ANIMATION_TTL_MS;
   }
 
   function handleEnemyDefeated() {
@@ -370,11 +408,226 @@ function startGame(
   function drawHero() {
     const h = state.hero;
     ctx.save();
-    ctx.shadowColor = "rgba(255, 211, 110, 0.6)";
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = "#ffd36e";
-    drawCircle(h.x, h.y, h.radius);
+    // Ensure crisp pixel look for images
+    (
+      ctx as CanvasRenderingContext2D & { imageSmoothingEnabled?: boolean }
+    ).imageSmoothingEnabled = false;
+
+    const current: HeroAnimState = h.animation.current;
+    const res = sprites[current];
+    const size = HERO_SPRITE_SIZE_UNITS;
+    const destX = h.x - size / 2;
+    const destY = h.y - size / 2;
+
+    if (res && res.loaded && res.frames > 0) {
+      const frame = h.animation.frameIndex % res.frames;
+      const sx = frame * res.frameSize;
+      const sy = 0;
+      ctx.drawImage(
+        res.image,
+        sx,
+        sy,
+        res.frameSize,
+        res.frameSize,
+        destX,
+        destY,
+        size,
+        size
+      );
+      ctx.restore();
+      return;
+    }
+
+    // Fallback: programmatic pixel-art
+    drawHeroPixelFallback(h.x, h.y, current, h.animation.frameIndex);
     ctx.restore();
+  }
+
+  function updateHeroAnimation(
+    inRange: boolean,
+    moveDistanceThisFrame: number,
+    deltaMs: number
+  ) {
+    const anim = state.hero.animation;
+    const was = anim.current;
+
+    // Attack animation takes precedence while active
+    if (anim.attackAnimMs > 0) {
+      anim.current = "attack";
+    } else if (!state.enemy) {
+      anim.current = "idle";
+    } else if (inRange) {
+      anim.current = "idle"; // in range but cooling down
+    } else if (moveDistanceThisFrame > 0.0001) {
+      anim.current = "move";
+    } else {
+      anim.current = "idle";
+    }
+
+    anim.attackAnimMs = Math.max(0, anim.attackAnimMs - deltaMs);
+
+    if (anim.current !== was) {
+      anim.frameIndex = 0;
+      anim.frameElapsedMs = 0;
+      return;
+    }
+
+    anim.frameElapsedMs += deltaMs;
+    const meta = ANIM_META[anim.current];
+    if (anim.frameElapsedMs >= meta.frameDurationMs) {
+      anim.frameElapsedMs -= meta.frameDurationMs;
+      anim.frameIndex = (anim.frameIndex + 1) % meta.frames;
+    }
+  }
+
+  function drawHeroPixelFallback(
+    x: number,
+    y: number,
+    stateName: HeroAnimState,
+    frameIndex: number
+  ) {
+    const GRID = 16;
+    const UNIT = HERO_SPRITE_SIZE_UNITS / GRID;
+    const originX = x - HERO_SPRITE_SIZE_UNITS / 2;
+    const originY = y - HERO_SPRITE_SIZE_UNITS / 2;
+
+    function px(ix: number, iy: number, w: number, h: number, color: string) {
+      ctx.fillStyle = color;
+      ctx.fillRect(
+        originX + ix * UNIT,
+        originY + iy * UNIT,
+        w * UNIT,
+        h * UNIT
+      );
+    }
+
+    // Base body
+    const bodyColor = "#ffd36e";
+    const outline = "#3a2b11";
+    // Outline
+    px(5, 2, 6, 1, outline);
+    px(4, 3, 1, 8, outline);
+    px(11, 3, 1, 8, outline);
+    px(5, 11, 6, 1, outline);
+    // Face/body fill
+    px(5, 3, 6, 8, bodyColor);
+
+    // Eyes (idle blink via frame)
+    const eyeOpen = stateName !== "attack" && frameIndex % 2 === 0;
+    px(6, 5, 1, 1, eyeOpen ? "#4a3b1a" : bodyColor);
+    px(9, 5, 1, 1, eyeOpen ? "#4a3b1a" : bodyColor);
+
+    // Arms/legs animation
+    if (stateName === "move") {
+      const phase = frameIndex % 4; // 0: L forward, 1: neutral, 2: R forward, 3: neutral
+      const footFront = "#ffe57a"; // brighter for front/forward foot
+      const footBack = "#caa24e"; // dimmer for back foot
+
+      if (phase === 0) {
+        // Left leg forward, right leg back
+        // Arms (opposite): left arm back(retracted), right arm forward(extended)
+        // left arm retracted
+        px(3, 6, 2, 1, outline);
+        px(3, 7, 2, 1, bodyColor);
+        // right arm extended
+        px(11, 6, 3, 1, outline);
+        px(11, 7, 3, 1, bodyColor);
+        // legs
+        px(5, 12, 1, 2, outline); // left forward
+        px(5, 13, 1, 1, footFront);
+        px(10, 12, 1, 2, outline); // right back
+        px(10, 13, 1, 1, footBack);
+      } else if (phase === 1) {
+        // Neutral stance
+        // Arms both retracted
+        px(3, 6, 2, 1, outline);
+        px(3, 7, 2, 1, bodyColor);
+        px(11, 6, 2, 1, outline);
+        px(11, 7, 2, 1, bodyColor);
+        // legs neutral
+        px(6, 12, 1, 2, outline);
+        px(6, 13, 1, 1, footBack);
+        px(9, 12, 1, 2, outline);
+        px(9, 13, 1, 1, footBack);
+      } else if (phase === 2) {
+        // Right leg forward, left leg back
+        // Arms (opposite): left arm forward(extended), right arm back(retracted)
+        // left arm extended
+        px(2, 6, 3, 1, outline);
+        px(2, 7, 3, 1, bodyColor);
+        // right arm retracted
+        px(11, 6, 2, 1, outline);
+        px(11, 7, 2, 1, bodyColor);
+        // legs
+        px(6, 12, 1, 2, outline); // left back (use central track to vary)
+        px(6, 13, 1, 1, footBack);
+        px(10, 12, 1, 2, outline); // right forward
+        px(10, 13, 1, 1, footFront);
+      } else {
+        // Neutral stance
+        px(3, 6, 2, 1, outline);
+        px(3, 7, 2, 1, bodyColor);
+        px(11, 6, 2, 1, outline);
+        px(11, 7, 2, 1, bodyColor);
+        px(6, 12, 1, 2, outline);
+        px(6, 13, 1, 1, footBack);
+        px(9, 12, 1, 2, outline);
+        px(9, 13, 1, 1, footBack);
+      }
+    } else if (stateName === "attack") {
+      const phase = frameIndex % ANIM_META.attack.frames;
+      // simple slash to the right
+      const slashColor = "#ffe57a";
+      if (phase === 0) {
+        px(12, 6, 2, 1, slashColor);
+      } else if (phase === 1) {
+        px(12, 6, 3, 1, slashColor);
+        px(14, 5, 1, 1, slashColor);
+      } else if (phase === 2) {
+        px(12, 6, 3, 1, slashColor);
+        px(14, 5, 1, 1, slashColor);
+        px(14, 7, 1, 1, slashColor);
+      } else {
+        px(12, 6, 2, 1, slashColor);
+      }
+      // arms forward
+      px(3, 6, 2, 1, outline);
+      px(3, 7, 2, 1, bodyColor);
+      px(11, 6, 2, 1, outline);
+      px(11, 7, 2, 1, bodyColor);
+      // stance
+      px(6, 12, 1, 2, outline);
+      px(9, 12, 1, 2, outline);
+    } else {
+      // idle subtle breathing: move chest one pixel every other frame
+      const chestOffset = frameIndex % 2 === 0 ? 0 : 1;
+      if (chestOffset) px(5, 3, 6, 1, bodyColor);
+      // simple arms and legs at rest
+      px(4, 7, 1, 1, outline);
+      px(11, 7, 1, 1, outline);
+      px(6, 12, 1, 2, outline);
+      px(9, 12, 1, 2, outline);
+    }
+  }
+
+  function tryLoadSprite(src: string, frameSize: number): SpriteResource {
+    const image = new Image();
+    const resource: SpriteResource = {
+      image,
+      frameSize,
+      frames: 0,
+      loaded: false,
+    };
+    image.onload = () => {
+      const frames = Math.max(1, Math.floor(image.width / frameSize));
+      resource.frames = frames;
+      resource.loaded = true;
+    };
+    image.onerror = () => {
+      resource.loaded = false;
+    };
+    image.src = src;
+    return resource;
   }
 
   function drawEnemy() {
@@ -640,6 +893,13 @@ function startGame(
     exp: number,
     elapsedMs: number
   ) {
+    // Gate by developer toggle
+    try {
+      const raw = localStorage.getItem(OVERLAY_TOGGLE_KEY);
+      const enabled = raw === null ? true : raw === "1";
+      if (!enabled) return;
+    } catch {}
+
     const el = overlayEl;
     const content = overlayContentEl;
     const closeBtn = overlayCloseBtn;

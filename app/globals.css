@@ -152,3 +152,31 @@ body {
   padding: 8px 14px;
   font-weight: 700;
 }
+
+/* Developer Toolbar */
+.dev-toolbar {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: rgba(16, 24, 32, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 6px 10px;
+  z-index: 1000;
+}
+.dev-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+}
+.dev-toggle {
+  cursor: pointer;
+  background: #243241;
+  color: #d6e6f2;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
