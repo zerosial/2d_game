@@ -23,6 +23,10 @@ export default function DevToolbar() {
     setEnabled(next);
     try {
       localStorage.setItem(OVERLAY_TOGGLE_KEY, next ? "1" : "0");
+      // Notify listeners (e.g., GameCanvas) to react immediately
+      window.dispatchEvent(
+        new CustomEvent("idleGame:overlayToggle", { detail: { enabled: next } })
+      );
     } catch {}
   };
 

@@ -231,6 +231,19 @@ function startGame(
     }
   };
   document.addEventListener("visibilitychange", onVisibility);
+  // Listen to overlay toggle changes from DevToolbar
+  const onOverlayToggle = (ev: Event) => {
+    const anyEv = ev as CustomEvent<{ enabled: boolean }>;
+    // If disabled while showing, hide immediately
+    const enabled = anyEv?.detail?.enabled;
+    if (enabled === false && overlayEl) {
+      overlayEl.classList.remove("show");
+    }
+  };
+  window.addEventListener(
+    "idleGame:overlayToggle",
+    onOverlayToggle as EventListener
+  );
   const onBeforeUnload = () => {
     try {
       localStorage.setItem(HIDDEN_AT_KEY, String(Date.now()));
@@ -288,6 +301,10 @@ function startGame(
     resizeObserver.disconnect();
     window.clearInterval(autosaveInterval);
     document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener(
+      "idleGame:overlayToggle",
+      onOverlayToggle as EventListener
+    );
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("pagehide", onPageHide);
     window.removeEventListener("pageshow", onPageShow);
@@ -893,12 +910,19 @@ function startGame(
     exp: number,
     elapsedMs: number
   ) {
-    // Gate by developer toggle
-    try {
-      const raw = localStorage.getItem(OVERLAY_TOGGLE_KEY);
-      const enabled = raw === null ? true : raw === "1";
-      if (!enabled) return;
-    } catch {}
+    // Gate by developer toggle, also respect while overlay visible
+    const overlayEnabled = (() => {
+      try {
+        const raw = localStorage.getItem(OVERLAY_TOGGLE_KEY);
+        return raw === null ? true : raw === "1";
+      } catch {
+        return true;
+      }
+    })();
+    if (!overlayEnabled) {
+      if (overlayEl) overlayEl.classList.remove("show");
+      return;
+    }
 
     const el = overlayEl;
     const content = overlayContentEl;

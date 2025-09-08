@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 type HeroAnimState = "idle" | "move" | "attack";
 
@@ -16,22 +16,11 @@ export default function SpriteGeneratorPage() {
   const moveRef = useRef<HTMLCanvasElement | null>(null);
   const attackRef = useRef<HTMLCanvasElement | null>(null);
 
-  const strips = useMemo(() => {
-    return {
-      idle: createStripCanvas("idle", META.idle.frames),
-      move: createStripCanvas("move", META.move.frames),
-      attack: createStripCanvas("attack", META.attack.frames),
-    } as const;
-  }, []);
-
   useEffect(() => {
-    const idle = idleRef.current;
-    const move = moveRef.current;
-    const attack = attackRef.current;
-    if (idle) drawToCanvasElement(idle, strips.idle);
-    if (move) drawToCanvasElement(move, strips.move);
-    if (attack) drawToCanvasElement(attack, strips.attack);
-  }, [strips]);
+    drawStripToCanvasRef(idleRef, "idle", META.idle.frames);
+    drawStripToCanvasRef(moveRef, "move", META.move.frames);
+    drawStripToCanvasRef(attackRef, "attack", META.attack.frames);
+  }, []);
 
   return (
     <div className="page-root" style={{ width: "100%", padding: 16 }}>
@@ -45,21 +34,18 @@ export default function SpriteGeneratorPage() {
         <Section
           title="Idle (2프레임)"
           canvasRef={idleRef}
-          source={strips.idle}
           downloadName="hero_idle.png"
           frames={META.idle.frames}
         />
         <Section
           title="Walk (4프레임)"
           canvasRef={moveRef}
-          source={strips.move}
           downloadName="hero_walk.png"
           frames={META.move.frames}
         />
         <Section
           title="Attack (4프레임)"
           canvasRef={attackRef}
-          source={strips.attack}
           downloadName="hero_attack.png"
           frames={META.attack.frames}
         />
@@ -71,7 +57,6 @@ export default function SpriteGeneratorPage() {
 function Section(props: {
   title: string;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  source: HTMLCanvasElement;
   downloadName: string;
   frames: number;
 }) {
@@ -89,7 +74,7 @@ function Section(props: {
         <h3 style={{ margin: 0 }}>{props.title}</h3>
         <button
           type="button"
-          onClick={() => downloadCanvas(props.source, props.downloadName)}
+          onClick={() => downloadFromRef(props.canvasRef, props.downloadName)}
           style={{
             cursor: "pointer",
             background: "var(--accent)",
@@ -110,17 +95,27 @@ function Section(props: {
   );
 }
 
-function drawToCanvasElement(
-  target: HTMLCanvasElement,
-  src: HTMLCanvasElement
+function drawStripToCanvasRef(
+  ref: React.RefObject<HTMLCanvasElement | null>,
+  stateName: HeroAnimState,
+  frames: number
 ) {
-  target.width = src.width;
-  target.height = src.height;
+  const target = ref.current;
+  if (!target) return;
+  target.width = frames * FRAME_SIZE;
+  target.height = FRAME_SIZE;
   const ctx = target.getContext("2d");
   if (!ctx) return;
-  ctx.imageSmoothingEnabled = false;
+  (
+    ctx as CanvasRenderingContext2D & { imageSmoothingEnabled?: boolean }
+  ).imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, target.width, target.height);
-  ctx.drawImage(src, 0, 0);
+  for (let i = 0; i < frames; i++) {
+    ctx.save();
+    ctx.translate(i * FRAME_SIZE, 0);
+    drawHeroPixelFallbackTile(ctx, stateName, i);
+    ctx.restore();
+  }
 }
 
 function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
@@ -133,29 +128,13 @@ function downloadCanvas(canvas: HTMLCanvasElement, filename: string) {
   document.body.removeChild(link);
 }
 
-function createStripCanvas(stateName: HeroAnimState, frames: number) {
-  const canvas = document.createElement("canvas");
-  canvas.width = frames * FRAME_SIZE;
-  canvas.height = FRAME_SIZE;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  ctx.imageSmoothingEnabled = false;
-  for (let i = 0; i < frames; i++) {
-    const tile = createTileFrame(stateName, i);
-    ctx.drawImage(tile, i * FRAME_SIZE, 0);
-  }
-  return canvas;
-}
-
-function createTileFrame(stateName: HeroAnimState, frameIndex: number) {
-  const canvas = document.createElement("canvas");
-  canvas.width = FRAME_SIZE;
-  canvas.height = FRAME_SIZE;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-  ctx.clearRect(0, 0, FRAME_SIZE, FRAME_SIZE);
-  drawHeroPixelFallbackTile(ctx, stateName, frameIndex);
-  return canvas;
+function downloadFromRef(
+  ref: React.RefObject<HTMLCanvasElement | null>,
+  filename: string
+) {
+  const el = ref.current;
+  if (!el) return;
+  downloadCanvas(el, filename);
 }
 
 function drawHeroPixelFallbackTile(
