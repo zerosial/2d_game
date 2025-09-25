@@ -17,11 +17,28 @@ type Enemy = {
   id: number;
 };
 
+type PlayerStats = {
+  level: number;
+  exp: number;
+  expToNext: number;
+  statPoints: number;
+  attackSpeed: number; // percentage bonus
+  attackPower: number; // flat bonus
+  maxTargets: number; // number of targets
+  _isProcessingStat?: boolean; // internal flag to prevent rapid clicks
+};
+
+type LevelUpPopup = {
+  show: boolean;
+  availablePoints: number;
+};
+
 export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const goldRef = useRef<HTMLSpanElement | null>(null);
+  const levelRef = useRef<HTMLSpanElement | null>(null);
   const expRef = useRef<HTMLSpanElement | null>(null);
+  const goldRef = useRef<HTMLSpanElement | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const overlayContentRef = useRef<HTMLDivElement | null>(null);
@@ -31,8 +48,9 @@ export default function GameCanvas() {
     if (
       !containerRef.current ||
       !canvasRef.current ||
-      !goldRef.current ||
+      !levelRef.current ||
       !expRef.current ||
+      !goldRef.current ||
       !statusRef.current
     ) {
       return;
@@ -40,8 +58,9 @@ export default function GameCanvas() {
     const dispose = startGame(
       containerRef.current,
       canvasRef.current,
-      goldRef.current,
+      levelRef.current,
       expRef.current,
+      goldRef.current,
       statusRef.current,
       overlayRef.current,
       overlayContentRef.current,
@@ -56,12 +75,16 @@ export default function GameCanvas() {
       <div className="hud">
         <div className="hud-left">
           <div className="stat">
-            <span className="label">G</span>
-            <span ref={goldRef}>0</span>
+            <span className="label">LV</span>
+            <span ref={levelRef}>1</span>
           </div>
           <div className="stat">
             <span className="label">EXP</span>
             <span ref={expRef}>0</span>
+          </div>
+          <div className="stat">
+            <span className="label">G</span>
+            <span ref={goldRef}>0</span>
           </div>
         </div>
         <div className="hud-right">
@@ -79,6 +102,48 @@ export default function GameCanvas() {
           </div>
         </div>
       </div>
+      <div
+        className="level-up-popup"
+        id="level-up-popup"
+        style={{ display: "none" }}
+      >
+        <div className="level-up-box">
+          <div className="level-up-title">레벨업!</div>
+          <div className="level-up-content">
+            <div className="stat-points">
+              스탯 포인트: <span id="available-points">0</span>
+            </div>
+            <div className="stat-buttons">
+              <div className="stat-row">
+                <span>
+                  공격속도: <span id="attack-speed-value">0</span>%
+                </span>
+                <button id="attack-speed-plus">+</button>
+              </div>
+              <div className="stat-row">
+                <span>
+                  공격력: <span id="attack-power-value">0</span>
+                </span>
+                <button id="attack-power-plus">+</button>
+              </div>
+              <div className="stat-row">
+                <span>
+                  타겟수: <span id="max-targets-value">1</span>
+                </span>
+                <button id="max-targets-plus">+</button>
+              </div>
+            </div>
+          </div>
+          <div className="level-up-actions">
+            <button id="level-up-confirm" type="button">
+              확인
+            </button>
+            <button id="level-up-cancel" type="button">
+              취소
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -89,8 +154,9 @@ export default function GameCanvas() {
 function startGame(
   containerElement: HTMLDivElement,
   canvasElement: HTMLCanvasElement,
-  hudGoldElement: HTMLSpanElement,
+  hudLevelElement: HTMLSpanElement,
   hudExpElement: HTMLSpanElement,
+  hudGoldElement: HTMLSpanElement,
   hudStatusElement: HTMLDivElement,
   overlayEl: HTMLDivElement | null,
   overlayContentEl: HTMLDivElement | null,
@@ -121,14 +187,20 @@ function startGame(
 
   const HERO_SPEED_UNITS_PER_SECOND = 140;
   const ATTACK_RANGE_UNITS = 140;
-  const ATTACK_INTERVAL_MS = 600;
-  const ATTACK_DAMAGE_AMOUNT = 25;
+  const BASE_ATTACK_INTERVAL_MS = 600;
+  const BASE_ATTACK_DAMAGE_AMOUNT = 25;
 
   const BASE_ENEMY_MAX_HP = 100;
 
   const GOLD_REWARD_PER_KILL = 5;
-  const EXP_REWARD_PER_KILL = 3;
+  const EXP_REWARD_PER_KILL = 30;
   const ENEMY_RESPAWN_DELAY_MS = 300;
+
+  // Level system constants
+  const MAX_LEVEL = 99;
+  const STAT_POINTS_PER_LEVEL = 5;
+  const BASE_EXP_REQUIRED = 100; // Level 1 -> 2 requires 100 exp
+  const EXP_MULTIPLIER = 1.15; // Each level requires 15% more exp
 
   const LIGHTNING_TTL_MS = 120;
   const LIGHTNING_SEGMENT_COUNT = 16;
@@ -169,6 +241,19 @@ function startGame(
     pendingRespawnAtMs: 0,
     nextEnemyId: 1,
     stats: { gold: 0, exp: 0, kills: 0 },
+    playerStats: {
+      level: 1,
+      exp: 0,
+      expToNext: BASE_EXP_REQUIRED,
+      statPoints: 0,
+      attackSpeed: 0,
+      attackPower: 0,
+      maxTargets: 1,
+    } as PlayerStats,
+    levelUpPopup: {
+      show: false,
+      availablePoints: 0,
+    } as LevelUpPopup,
     effects: [] as LightningEffect[],
     rafId: 0 as number | 0,
   };
@@ -201,6 +286,18 @@ function startGame(
   tryResumeProgress();
   spawnEnemies();
   updateHud();
+
+  // Setup level up popup event listeners
+  setupLevelUpPopupListeners();
+
+  // Setup HUD click events
+  if (hudLevelElement) {
+    hudLevelElement.addEventListener("click", () => {
+      if (state.playerStats.statPoints > 0) {
+        showLevelUpPopup();
+      }
+    });
+  }
 
   // Observers
   const resizeObserver = new ResizeObserver(() => {
@@ -366,7 +463,7 @@ function startGame(
       hero.attackCooldownMs -= deltaMs;
       if (hero.attackCooldownMs <= 0) {
         performAttack(targetEnemy);
-        hero.attackCooldownMs = ATTACK_INTERVAL_MS;
+        hero.attackCooldownMs = getAttackInterval();
       }
     } else {
       hudStatusElement.textContent = "이동 중";
@@ -415,19 +512,30 @@ function startGame(
     const dy = targetEnemy.y - hero.y;
     updateHeroDirection(dx, dy);
 
-    spawnLightningEffect(hero.x, hero.y, targetEnemy.x, targetEnemy.y);
-    targetEnemy.hp -= ATTACK_DAMAGE_AMOUNT;
-    if (targetEnemy.hp <= 0) {
-      handleEnemyDefeated(targetEnemy);
-    }
+    // Get multiple targets based on maxTargets stat
+    const maxTargets = state.playerStats.maxTargets;
+    const targets = findMultipleTargets(targetEnemy, maxTargets);
+
+    // Attack all targets
+    targets.forEach((enemy) => {
+      spawnLightningEffect(hero.x, hero.y, enemy.x, enemy.y);
+      enemy.hp -= getAttackDamage();
+      if (enemy.hp <= 0) {
+        handleEnemyDefeated(enemy);
+      }
+    });
+
     // Trigger attack animation window
     hero.animation.attackAnimMs = ATTACK_ANIMATION_TTL_MS;
   }
 
   function handleEnemyDefeated(defeatedEnemy: Enemy) {
     state.stats.gold += GOLD_REWARD_PER_KILL;
-    state.stats.exp += EXP_REWARD_PER_KILL;
     state.stats.kills += 1;
+
+    // Add experience points
+    addExp(EXP_REWARD_PER_KILL);
+
     updateHud();
 
     // 몬스터를 배열에서 제거
@@ -949,6 +1057,272 @@ function startGame(
     return closestEnemy;
   }
 
+  function findMultipleTargets(
+    primaryTarget: Enemy,
+    maxTargets: number
+  ): Enemy[] {
+    if (state.enemies.length === 0) return [];
+
+    const hero = state.hero;
+    const targets: Enemy[] = [];
+
+    // Always include the primary target
+    targets.push(primaryTarget);
+
+    // If we only need 1 target, return early
+    if (maxTargets <= 1) return targets;
+
+    // Find additional targets by distance
+    const remainingEnemies = state.enemies.filter(
+      (enemy) => enemy !== primaryTarget
+    );
+    const sortedEnemies = remainingEnemies.sort((a, b) => {
+      const distA = Math.hypot(a.x - hero.x, a.y - hero.y);
+      const distB = Math.hypot(b.x - hero.x, b.y - hero.y);
+      return distA - distB;
+    });
+
+    // Add up to maxTargets - 1 additional targets
+    const additionalTargets = sortedEnemies.slice(0, maxTargets - 1);
+    targets.push(...additionalTargets);
+
+    return targets;
+  }
+
+  function calculateExpRequired(level: number): number {
+    if (level <= 1) return BASE_EXP_REQUIRED;
+    return Math.floor(BASE_EXP_REQUIRED * Math.pow(EXP_MULTIPLIER, level - 1));
+  }
+
+  function addExp(amount: number) {
+    const playerStats = state.playerStats;
+    playerStats.exp += amount;
+    console.log(
+      "addExp called with amount:",
+      amount,
+      "current exp:",
+      playerStats.exp,
+      "expToNext:",
+      playerStats.expToNext
+    );
+
+    // Check for level up
+    while (
+      playerStats.exp >= playerStats.expToNext &&
+      playerStats.level < MAX_LEVEL
+    ) {
+      playerStats.exp -= playerStats.expToNext;
+      playerStats.level++;
+      playerStats.statPoints += STAT_POINTS_PER_LEVEL;
+      console.log(
+        "Level up! New level:",
+        playerStats.level,
+        "Stat points:",
+        playerStats.statPoints
+      );
+
+      // Calculate next level exp requirement
+      playerStats.expToNext = calculateExpRequired(playerStats.level + 1);
+
+      // Show level up notification (blinking HUD)
+      showLevelUpNotification();
+    }
+
+    // Cap at max level
+    if (playerStats.level >= MAX_LEVEL) {
+      playerStats.exp = 0;
+      playerStats.expToNext = 0;
+    }
+  }
+
+  function showLevelUpNotification() {
+    // Add blinking effect to level display
+    const levelElement = hudLevelElement;
+    if (levelElement) {
+      levelElement.classList.add("level-up-notification");
+
+      // Add click listener to open popup
+      const clickHandler = () => {
+        levelElement.classList.remove("level-up-notification");
+        levelElement.removeEventListener("click", clickHandler);
+        showLevelUpPopup();
+      };
+      levelElement.addEventListener("click", clickHandler);
+      levelElement.style.cursor = "pointer";
+    }
+  }
+
+  function showLevelUpPopup() {
+    const popup = document.getElementById("level-up-popup") as HTMLDivElement;
+    if (!popup) return;
+
+    popup.style.display = "flex";
+    updateLevelUpPopup();
+  }
+
+  function hideLevelUpPopup() {
+    const popup = document.getElementById("level-up-popup") as HTMLDivElement;
+    if (!popup) return;
+
+    // Remove blinking effect
+    const levelElement = hudLevelElement;
+    if (levelElement) {
+      levelElement.classList.remove("level-up-notification");
+    }
+
+    popup.style.display = "none";
+  }
+
+  function updateLevelUpPopup() {
+    const playerStats = state.playerStats;
+
+    // Update available points
+    const availablePointsEl = document.getElementById("available-points");
+    if (availablePointsEl) {
+      availablePointsEl.textContent = String(playerStats.statPoints);
+    }
+
+    // Update stat values
+    const attackSpeedEl = document.getElementById("attack-speed-value");
+    if (attackSpeedEl) {
+      attackSpeedEl.textContent = String(playerStats.attackSpeed);
+    }
+
+    const attackPowerEl = document.getElementById("attack-power-value");
+    if (attackPowerEl) {
+      attackPowerEl.textContent = String(playerStats.attackPower);
+    }
+
+    const maxTargetsEl = document.getElementById("max-targets-value");
+    if (maxTargetsEl) {
+      maxTargetsEl.textContent = String(playerStats.maxTargets);
+    }
+
+    // Update button states
+    const attackSpeedBtn = document.getElementById(
+      "attack-speed-plus"
+    ) as HTMLButtonElement;
+    const attackPowerBtn = document.getElementById(
+      "attack-power-plus"
+    ) as HTMLButtonElement;
+    const maxTargetsBtn = document.getElementById(
+      "max-targets-plus"
+    ) as HTMLButtonElement;
+
+    if (attackSpeedBtn) {
+      attackSpeedBtn.disabled = playerStats.statPoints < 1;
+    }
+    if (attackPowerBtn) {
+      attackPowerBtn.disabled = playerStats.statPoints < 1;
+    }
+    if (maxTargetsBtn) {
+      maxTargetsBtn.disabled =
+        playerStats.statPoints < 5 || playerStats.maxTargets >= 5;
+    }
+  }
+
+  function addStatPoint(
+    statType: "attackSpeed" | "attackPower" | "maxTargets"
+  ) {
+    const playerStats = state.playerStats;
+
+    // Check if player has enough points
+    const cost = statType === "maxTargets" ? 5 : 1;
+    if (playerStats.statPoints < cost) return;
+
+    // Prevent multiple rapid clicks
+    if (playerStats._isProcessingStat) return;
+    playerStats._isProcessingStat = true;
+
+    playerStats.statPoints -= cost;
+
+    if (statType === "attackSpeed") {
+      playerStats.attackSpeed += 2; // 2% per point
+    } else if (statType === "attackPower") {
+      playerStats.attackPower += 1; // 1 damage per point
+    } else if (statType === "maxTargets") {
+      if (playerStats.maxTargets < 5) {
+        // Cap at 5 targets
+        playerStats.maxTargets++;
+      } else {
+        playerStats.statPoints += cost; // Refund the points
+        playerStats._isProcessingStat = false;
+        return;
+      }
+    }
+
+    updateLevelUpPopup();
+
+    // Reset processing flag after a short delay
+    setTimeout(() => {
+      playerStats._isProcessingStat = false;
+    }, 100);
+  }
+
+  function setupLevelUpPopupListeners() {
+    // Stat buttons
+    const attackSpeedBtn = document.getElementById("attack-speed-plus");
+    const attackPowerBtn = document.getElementById("attack-power-plus");
+    const maxTargetsBtn = document.getElementById("max-targets-plus");
+
+    if (attackSpeedBtn) {
+      attackSpeedBtn.addEventListener("click", () =>
+        addStatPoint("attackSpeed")
+      );
+    }
+    if (attackPowerBtn) {
+      attackPowerBtn.addEventListener("click", () =>
+        addStatPoint("attackPower")
+      );
+    }
+    if (maxTargetsBtn) {
+      maxTargetsBtn.addEventListener("click", () => addStatPoint("maxTargets"));
+    }
+
+    // Confirm and cancel buttons
+    const confirmBtn = document.getElementById("level-up-confirm");
+    const cancelBtn = document.getElementById("level-up-cancel");
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener("click", () => {
+        hideLevelUpPopup();
+        updateHud();
+      });
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", () => {
+        hideLevelUpPopup();
+        // If there are still stat points, show notification again
+        if (state.playerStats.statPoints > 0) {
+          showLevelUpNotification();
+        }
+      });
+    }
+
+    // Click outside to close
+    const popup = document.getElementById("level-up-popup");
+    if (popup) {
+      popup.addEventListener("click", (e) => {
+        if (e.target === popup) {
+          hideLevelUpPopup();
+          // If there are still stat points, show notification again
+          if (state.playerStats.statPoints > 0) {
+            showLevelUpNotification();
+          }
+        }
+      });
+    }
+  }
+
+  function getAttackInterval(): number {
+    const speedBonus = state.playerStats.attackSpeed / 100;
+    return BASE_ATTACK_INTERVAL_MS * (1 - speedBonus);
+  }
+
+  function getAttackDamage(): number {
+    return BASE_ATTACK_DAMAGE_AMOUNT + state.playerStats.attackPower;
+  }
+
   function fitCanvasToContainer() {
     const rect = containerElement.getBoundingClientRect();
     const dpr = state.devicePixelRatio;
@@ -975,8 +1349,26 @@ function startGame(
   }
 
   function updateHud() {
-    hudGoldElement.textContent = String(state.stats.gold);
-    hudExpElement.textContent = String(state.stats.exp);
+    const playerStats = state.playerStats;
+
+    // Update level display
+    if (hudLevelElement) {
+      hudLevelElement.textContent = String(playerStats.level);
+    }
+
+    // Update exp display
+    if (hudExpElement) {
+      if (playerStats.level >= MAX_LEVEL) {
+        hudExpElement.textContent = "MAX";
+      } else {
+        hudExpElement.textContent = `${playerStats.exp}/${playerStats.expToNext}`;
+      }
+    }
+
+    // Update gold display
+    if (hudGoldElement) {
+      hudGoldElement.textContent = String(state.stats.gold);
+    }
   }
 
   function randomRange(min: number, max: number) {
@@ -1070,8 +1462,8 @@ function startGame(
   function simulateOffline(elapsedMs: number) {
     let timeSpent = 0;
     let killsGained = 0;
-    const damagePerHit = ATTACK_DAMAGE_AMOUNT;
-    const hitInterval = ATTACK_INTERVAL_MS;
+    const damagePerHit = BASE_ATTACK_DAMAGE_AMOUNT;
+    const hitInterval = BASE_ATTACK_INTERVAL_MS;
     while (timeSpent < elapsedMs) {
       const enemyMaxHp = BASE_ENEMY_MAX_HP;
       const hitsToKill = Math.ceil(enemyMaxHp / damagePerHit);
