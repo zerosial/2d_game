@@ -33,6 +33,28 @@ type LevelUpPopup = {
   availablePoints: number;
 };
 
+type EquipmentGrade = "S" | "A" | "B" | "C" | "D";
+
+type EquipmentType = "weapon" | "helmet" | "armor" | "shoes";
+
+type Equipment = {
+  id: string;
+  name: string;
+  grade: EquipmentGrade;
+  type: EquipmentType;
+  stats: {
+    attackPower?: number;
+    attackSpeed?: number;
+    maxTargets?: number;
+  };
+  equipped: boolean;
+};
+
+type GachaResult = {
+  equipment: Equipment[];
+  totalCost: number;
+};
+
 export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -45,6 +67,14 @@ export default function GameCanvas() {
   const overlayCloseRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
+    console.log("useEffect 실행됨");
+    console.log("containerRef.current:", containerRef.current);
+    console.log("canvasRef.current:", canvasRef.current);
+    console.log("levelRef.current:", levelRef.current);
+    console.log("expRef.current:", expRef.current);
+    console.log("goldRef.current:", goldRef.current);
+    console.log("statusRef.current:", statusRef.current);
+
     if (
       !containerRef.current ||
       !canvasRef.current ||
@@ -53,8 +83,11 @@ export default function GameCanvas() {
       !goldRef.current ||
       !statusRef.current
     ) {
+      console.log("일부 ref가 null입니다. startGame을 실행하지 않습니다.");
       return;
     }
+
+    console.log("startGame 함수를 호출합니다.");
     const dispose = startGame(
       containerRef.current,
       canvasRef.current,
@@ -74,7 +107,7 @@ export default function GameCanvas() {
       <canvas ref={canvasRef} id="game-canvas" />
       <div className="hud">
         <div className="hud-left">
-          <div className="stat">
+          <div className="stat" id="level-stat">
             <span className="label">LV</span>
             <span ref={levelRef}>1</span>
           </div>
@@ -91,6 +124,30 @@ export default function GameCanvas() {
           <div ref={statusRef}></div>
         </div>
       </div>
+
+      {/* Bottom Tab Menu */}
+      <div className="bottom-tabs">
+        <div className="tab active" id="character-tab">
+          <span className="tab-icon">👤</span>
+          <span className="tab-label">캐릭터</span>
+        </div>
+        <div className="tab" id="inventory-tab">
+          <span className="tab-icon">🎒</span>
+          <span className="tab-label">인벤토리</span>
+        </div>
+        <div className="tab" id="gacha-tab">
+          <span className="tab-icon">🎰</span>
+          <span className="tab-label">가챠</span>
+        </div>
+        <div className="tab" id="enhancement-tab">
+          <span className="tab-icon">⚡</span>
+          <span className="tab-label">강화</span>
+        </div>
+        <div className="tab" id="tab5">
+          <span className="tab-icon">❓</span>
+          <span className="tab-label">미정</span>
+        </div>
+      </div>
       <div className="overlay" ref={overlayRef}>
         <div className="overlay-box">
           <div className="overlay-title">오프라인 보상</div>
@@ -103,44 +160,219 @@ export default function GameCanvas() {
         </div>
       </div>
       <div
-        className="level-up-popup"
-        id="level-up-popup"
+        className="character-popup"
+        id="character-popup"
         style={{ display: "none" }}
       >
-        <div className="level-up-box">
-          <div className="level-up-title">레벨업!</div>
-          <div className="level-up-content">
-            <div className="stat-points">
-              스탯 포인트: <span id="available-points">0</span>
+        <div className="character-box">
+          <div className="character-header">
+            <div className="character-title">캐릭터 정보</div>
+            <button className="close-btn" id="character-close">
+              ×
+            </button>
+          </div>
+          <div className="character-content">
+            <div className="character-info">
+              <div className="info-row">
+                <span className="info-label">레벨</span>
+                <span className="info-value" id="character-level">
+                  1
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="info-label">경험치</span>
+                <span className="info-value" id="character-exp">
+                  0/100
+                </span>
+              </div>
+              <div className="info-row">
+                <span className="info-label">골드</span>
+                <span className="info-value" id="character-gold">
+                  0
+                </span>
+              </div>
             </div>
-            <div className="stat-buttons">
-              <div className="stat-row">
-                <span>
-                  공격속도: <span id="attack-speed-value">0</span>%
-                </span>
-                <button id="attack-speed-plus">+</button>
+
+            <div className="equipment-section">
+              <div className="equipment-section-title">장착 장비</div>
+              <div className="equipped-items">
+                <div className="equipped-item">
+                  <span className="equipment-slot">무기:</span>
+                  <span className="equipment-name" id="equipped-weapon">
+                    없음
+                  </span>
+                </div>
+                <div className="equipped-item">
+                  <span className="equipment-slot">모자:</span>
+                  <span className="equipment-name" id="equipped-helmet">
+                    없음
+                  </span>
+                </div>
+                <div className="equipped-item">
+                  <span className="equipment-slot">방어구:</span>
+                  <span className="equipment-name" id="equipped-armor">
+                    없음
+                  </span>
+                </div>
+                <div className="equipped-item">
+                  <span className="equipment-slot">신발:</span>
+                  <span className="equipment-name" id="equipped-shoes">
+                    없음
+                  </span>
+                </div>
               </div>
-              <div className="stat-row">
-                <span>
-                  공격력: <span id="attack-power-value">0</span>
-                </span>
-                <button id="attack-power-plus">+</button>
+            </div>
+
+            <div className="stat-section">
+              <div className="stat-section-title">스탯</div>
+              <div className="stat-points">
+                스탯 포인트: <span id="available-points">0</span>
               </div>
-              <div className="stat-row">
-                <span>
-                  타겟수: <span id="max-targets-value">1</span>
-                </span>
-                <button id="max-targets-plus">+</button>
+              <div className="stat-buttons">
+                <div className="stat-row">
+                  <div className="stat-info">
+                    <span className="stat-name">공격속도</span>
+                    <span className="stat-value">
+                      <span id="attack-speed-value">0</span>%
+                    </span>
+                  </div>
+                  <button id="attack-speed-plus" className="stat-btn">
+                    +
+                  </button>
+                </div>
+                <div className="stat-row">
+                  <div className="stat-info">
+                    <span className="stat-name">공격력</span>
+                    <span className="stat-value">
+                      <span id="attack-power-value">0</span>
+                    </span>
+                  </div>
+                  <button id="attack-power-plus" className="stat-btn">
+                    +
+                  </button>
+                </div>
+                <div className="stat-row">
+                  <div className="stat-info">
+                    <span className="stat-name">타겟수</span>
+                    <span className="stat-value">
+                      <span id="max-targets-value">1</span>
+                    </span>
+                  </div>
+                  <button id="max-targets-plus" className="stat-btn">
+                    +
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-          <div className="level-up-actions">
-            <button id="level-up-confirm" type="button">
-              확인
+        </div>
+      </div>
+
+      {/* Inventory Popup */}
+      <div
+        className="inventory-popup"
+        id="inventory-popup"
+        style={{ display: "none" }}
+      >
+        <div className="inventory-box">
+          <div className="inventory-header">
+            <div className="inventory-title">인벤토리</div>
+            <button className="close-btn" id="inventory-close">
+              ×
             </button>
-            <button id="level-up-cancel" type="button">
-              취소
+          </div>
+          <div className="inventory-content">
+            <div className="inventory-controls">
+              <div className="sort-controls">
+                <span className="control-label">정렬:</span>
+                <button className="sort-btn" id="sort-grade" data-sort="grade">
+                  등급순
+                </button>
+                <button
+                  className="sort-btn"
+                  id="sort-acquired"
+                  data-sort="acquired"
+                >
+                  획득순
+                </button>
+              </div>
+              <div className="sell-controls">
+                <button className="sell-btn" id="sell-low-grade">
+                  B등급 이하 판매
+                </button>
+              </div>
+            </div>
+            <div className="equipment-grid" id="equipment-grid">
+              {/* Equipment items will be dynamically added here */}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Gacha Popup */}
+      <div className="gacha-popup" id="gacha-popup" style={{ display: "none" }}>
+        <div className="gacha-box">
+          <div className="gacha-header">
+            <div className="gacha-title">가챠</div>
+            <button className="close-btn" id="gacha-close">
+              ×
             </button>
+          </div>
+          <div className="gacha-content">
+            <div className="gacha-currency">
+              <span className="currency-label">가챠 재화:</span>
+              <span className="currency-value" id="gacha-currency-value">
+                300
+              </span>
+            </div>
+            <div className="gacha-buttons">
+              <button className="gacha-btn single" id="single-gacha">
+                1회 뽑기 (10)
+              </button>
+              <button className="gacha-btn multi" id="multi-gacha">
+                11회 뽑기 (10)
+              </button>
+            </div>
+            <div className="gacha-rates">
+              <div className="rate-info">
+                S: 5% | A: 10% | B: 30% | C: 30% | D: 25%
+              </div>
+            </div>
+            <div className="gacha-results" id="gacha-results">
+              {/* Gacha results will be displayed here */}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Enhancement Popup */}
+      <div
+        className="enhancement-popup"
+        id="enhancement-popup"
+        style={{ display: "none" }}
+      >
+        <div className="enhancement-box">
+          <div className="enhancement-header">
+            <div className="enhancement-title">강화</div>
+            <button className="close-btn" id="enhancement-close">
+              ×
+            </button>
+          </div>
+          <div className="enhancement-content">
+            <div className="enhancement-info">
+              <div className="enhancement-currency">
+                <span className="currency-label">골드:</span>
+                <span
+                  className="currency-value"
+                  id="enhancement-currency-value"
+                >
+                  0
+                </span>
+              </div>
+            </div>
+            <div className="enhancement-items" id="enhancement-items">
+              {/* Enhancement items will be displayed here */}
+            </div>
           </div>
         </div>
       </div>
@@ -162,6 +394,7 @@ function startGame(
   overlayContentEl: HTMLDivElement | null,
   overlayCloseBtn: HTMLButtonElement | null
 ) {
+  console.log("startGame 함수가 실행되었습니다!");
   // Constants
   const WORLD_WIDTH = 540;
   const WORLD_HEIGHT = 960;
@@ -256,6 +489,21 @@ function startGame(
     } as LevelUpPopup,
     effects: [] as LightningEffect[],
     rafId: 0 as number | 0,
+    // Equipment and Gacha system
+    equipment: [] as Equipment[],
+    equippedItems: {
+      weapon: null as Equipment | null,
+      helmet: null as Equipment | null,
+      armor: null as Equipment | null,
+      shoes: null as Equipment | null,
+    },
+    gachaCurrency: 300, // 기본 300
+    currentTab: "character" as
+      | "character"
+      | "inventory"
+      | "gacha"
+      | "enhancement",
+    inventorySortBy: "grade" as "grade" | "acquired", // 정렬 기준
   };
 
   // Optional external sprite resources (loaded if present under /public/sprites)
@@ -288,24 +536,32 @@ function startGame(
   updateHud();
 
   // Setup level up popup event listeners
+  console.log("setupLevelUpPopupListeners 호출 전");
   setupLevelUpPopupListeners();
+  console.log("setupLevelUpPopupListeners 호출 후");
 
   // Setup HUD click events
-  if (hudLevelElement) {
-    hudLevelElement.addEventListener("click", () => {
-      if (state.playerStats.statPoints > 0) {
-        showLevelUpPopup();
-      }
+  console.log("HUD 클릭 이벤트 설정 시작");
+  const levelStatElement = document.getElementById("level-stat");
+  if (levelStatElement) {
+    levelStatElement.addEventListener("click", () => {
+      showCharacterPopup();
     });
   }
+  console.log("HUD 클릭 이벤트 설정 완료");
+
+  // Setup tab click events will be done after function definitions
 
   // Observers
+  console.log("Observer 설정 시작");
   const resizeObserver = new ResizeObserver(() => {
     fitCanvasToContainer();
   });
   resizeObserver.observe(containerElement);
+  console.log("Observer 설정 완료");
 
   // DPR change listener (with fallback)
+  console.log("DPR change listener 설정 시작");
   type MediaQueryListDeprecated = MediaQueryList & {
     addListener: (
       listener: (this: MediaQueryList, ev: MediaQueryListEvent) => void
@@ -326,6 +582,7 @@ function startGame(
   ) {
     (mq as MediaQueryListDeprecated).addListener(onDprChange);
   }
+  console.log("DPR change listener 설정 완료");
 
   // Persist periodically and on tab hide/close
   const autosaveInterval = window.setInterval(persistProgress, 5000);
@@ -405,6 +662,281 @@ function startGame(
     state.lastWallClockMs = Date.now();
   };
   state.rafId = window.requestAnimationFrame(loop);
+
+  // Setup tab click events
+  console.log("탭 이벤트 리스너 설정을 시작합니다...");
+
+  const characterTab = document.getElementById("character-tab");
+  const inventoryTab = document.getElementById("inventory-tab");
+  const gachaTab = document.getElementById("gacha-tab");
+  const enhancementTab = document.getElementById("enhancement-tab");
+
+  // Debug: Check if tabs exist
+  console.log("Character tab:", characterTab);
+  console.log("Inventory tab:", inventoryTab);
+  console.log("Gacha tab:", gachaTab);
+
+  if (characterTab) {
+    characterTab.addEventListener("click", () => {
+      switchTab("character");
+      showCharacterPopup();
+    });
+  }
+
+  if (inventoryTab) {
+    console.log("Adding inventory tab listener");
+    inventoryTab.addEventListener("click", () => {
+      console.log("Inventory tab clicked!");
+      switchTab("inventory");
+      showInventoryPopup();
+    });
+  } else {
+    console.log("Inventory tab not found!");
+  }
+
+  if (gachaTab) {
+    console.log("Adding gacha tab listener");
+    gachaTab.addEventListener("click", () => {
+      console.log("Gacha tab clicked!");
+      switchTab("gacha");
+      showGachaPopup();
+    });
+  } else {
+    console.log("Gacha tab not found!");
+  }
+
+  if (enhancementTab) {
+    console.log("Adding enhancement tab listener");
+    enhancementTab.addEventListener("click", () => {
+      console.log("Enhancement tab clicked!");
+      switchTab("enhancement");
+      showEnhancementPopup();
+    });
+  } else {
+    console.log("Enhancement tab not found!");
+  }
+
+  // ------------------------------
+  // Enhancement System
+  // ------------------------------
+  function showEnhancementPopup() {
+    const popup = document.getElementById(
+      "enhancement-popup"
+    ) as HTMLDivElement;
+    if (!popup) return;
+
+    updateEnhancementCurrency();
+    updateEnhancementDisplay();
+    popup.style.display = "flex";
+  }
+
+  function hideEnhancementPopup() {
+    const popup = document.getElementById(
+      "enhancement-popup"
+    ) as HTMLDivElement;
+    if (!popup) return;
+    popup.style.display = "none";
+  }
+
+  function updateEnhancementCurrency() {
+    const currencyEl = document.getElementById("enhancement-currency-value");
+    if (currencyEl) {
+      currencyEl.textContent = String(state.stats.gold);
+    }
+  }
+
+  function updateEnhancementDisplay() {
+    const itemsEl = document.getElementById("enhancement-items");
+    if (!itemsEl) return;
+
+    itemsEl.innerHTML = "";
+
+    // Show only equipped items for enhancement
+    const equippedItems = Object.values(state.equippedItems).filter(
+      (item) => item !== null
+    );
+
+    if (equippedItems.length === 0) {
+      itemsEl.innerHTML =
+        "<div class='no-enhancement'>장착된 장비가 없습니다.</div>";
+      return;
+    }
+
+    equippedItems.forEach((equipment) => {
+      const itemEl = document.createElement("div");
+      itemEl.className = `enhancement-item grade-${equipment.grade.toLowerCase()}`;
+      itemEl.innerHTML = `
+        <div class="item-grade">${equipment.grade}</div>
+        <div class="item-name">${equipment.name}</div>
+        <div class="item-type">${getEquipmentTypeName(equipment.type)}</div>
+        <div class="item-stats">
+          ${
+            equipment.stats.attackPower
+              ? `공격력 +${equipment.stats.attackPower} `
+              : ""
+          }
+          ${
+            equipment.stats.attackSpeed
+              ? `공격속도 +${equipment.stats.attackSpeed}% `
+              : ""
+          }
+          ${
+            equipment.stats.maxTargets
+              ? `타겟수 +${equipment.stats.maxTargets} `
+              : ""
+          }
+        </div>
+        <div class="enhancement-actions">
+          <button class="enhance-btn" data-equipment-id="${equipment.id}">
+            강화 (1000G)
+          </button>
+        </div>
+      `;
+      itemsEl.appendChild(itemEl);
+    });
+
+    // Add event listeners to enhance buttons
+    const enhanceButtons = itemsEl.querySelectorAll(".enhance-btn");
+    enhanceButtons.forEach((button) => {
+      button.addEventListener("click", (e) => {
+        const equipmentId = (e.target as HTMLButtonElement).getAttribute(
+          "data-equipment-id"
+        );
+        if (equipmentId) {
+          enhanceEquipment(equipmentId);
+        }
+      });
+    });
+  }
+
+  function enhanceEquipment(equipmentId: string) {
+    const equipment = state.equipment.find((eq) => eq.id === equipmentId);
+    if (!equipment) return;
+
+    const cost = 1000; // 1000 골드
+    if (state.stats.gold < cost) {
+      alert("골드가 부족합니다!");
+      return;
+    }
+
+    state.stats.gold -= cost;
+
+    // Enhance stats
+    if (equipment.stats.attackPower) {
+      equipment.stats.attackPower +=
+        Math.floor(equipment.stats.attackPower * 0.1) + 1;
+    }
+    if (equipment.stats.attackSpeed) {
+      equipment.stats.attackSpeed +=
+        Math.floor(equipment.stats.attackSpeed * 0.1) + 1;
+    }
+    if (equipment.stats.maxTargets) {
+      equipment.stats.maxTargets += 1;
+    }
+
+    updateEnhancementCurrency();
+    updateEnhancementDisplay();
+    updateCharacterEquipmentDisplay();
+    updateHud();
+  }
+
+  // ------------------------------
+  // Inventory Controls
+  // ------------------------------
+  function sellLowGradeEquipment() {
+    const lowGradeItems = state.equipment.filter(
+      (eq) => eq.grade === "C" || eq.grade === "D"
+    );
+
+    if (lowGradeItems.length === 0) {
+      alert("판매할 장비가 없습니다!");
+      return;
+    }
+
+    const totalValue = lowGradeItems.length * 100; // 100 골드 per item
+    state.stats.gold += totalValue;
+
+    // Remove items from equipment array
+    state.equipment = state.equipment.filter(
+      (eq) => eq.grade !== "C" && eq.grade !== "D"
+    );
+
+    // Unequip any low grade items that were equipped
+    Object.keys(state.equippedItems).forEach((key) => {
+      const item = state.equippedItems[key as keyof typeof state.equippedItems];
+      if (item && (item.grade === "C" || item.grade === "D")) {
+        state.equippedItems[key as keyof typeof state.equippedItems] = null;
+      }
+    });
+
+    updateInventoryDisplay();
+    updateCharacterEquipmentDisplay();
+    updateHud();
+    alert(
+      `${lowGradeItems.length}개 장비를 판매하여 ${totalValue} 골드를 획득했습니다!`
+    );
+  }
+
+  function setInventorySort(sortBy: "grade" | "acquired") {
+    state.inventorySortBy = sortBy;
+    updateInventoryDisplay();
+    updateSortButtons();
+  }
+
+  function updateSortButtons() {
+    const gradeBtn = document.getElementById("sort-grade");
+    const acquiredBtn = document.getElementById("sort-acquired");
+
+    if (gradeBtn) {
+      gradeBtn.classList.toggle("active", state.inventorySortBy === "grade");
+    }
+    if (acquiredBtn) {
+      acquiredBtn.classList.toggle(
+        "active",
+        state.inventorySortBy === "acquired"
+      );
+    }
+  }
+
+  // Setup enhancement and inventory controls
+  function setupEnhancementAndInventoryControls() {
+    // Enhancement close button
+    const enhancementCloseBtn = document.getElementById("enhancement-close");
+    if (enhancementCloseBtn) {
+      enhancementCloseBtn.addEventListener("click", hideEnhancementPopup);
+    }
+
+    // Inventory sort buttons
+    const sortGradeBtn = document.getElementById("sort-grade");
+    const sortAcquiredBtn = document.getElementById("sort-acquired");
+    const sellBtn = document.getElementById("sell-low-grade");
+
+    if (sortGradeBtn) {
+      sortGradeBtn.addEventListener("click", () => setInventorySort("grade"));
+    }
+    if (sortAcquiredBtn) {
+      sortAcquiredBtn.addEventListener("click", () =>
+        setInventorySort("acquired")
+      );
+    }
+    if (sellBtn) {
+      sellBtn.addEventListener("click", sellLowGradeEquipment);
+    }
+
+    // Click outside to close enhancement popup
+    const enhancementPopup = document.getElementById("enhancement-popup");
+    if (enhancementPopup) {
+      enhancementPopup.addEventListener("click", (e) => {
+        if (e.target === enhancementPopup) {
+          hideEnhancementPopup();
+        }
+      });
+    }
+  }
+
+  // Call setup function
+  setupGachaAndInventoryListeners();
+  setupEnhancementAndInventoryControls();
 
   // Cleanup
   return () => {
@@ -1137,37 +1669,42 @@ function startGame(
 
   function showLevelUpNotification() {
     // Add blinking effect to level display
-    const levelElement = hudLevelElement;
-    if (levelElement) {
-      levelElement.classList.add("level-up-notification");
+    const levelStatElement = document.getElementById("level-stat");
+    if (levelStatElement) {
+      levelStatElement.classList.add("level-up-notification");
 
       // Add click listener to open popup
       const clickHandler = () => {
-        levelElement.classList.remove("level-up-notification");
-        levelElement.removeEventListener("click", clickHandler);
-        showLevelUpPopup();
+        levelStatElement.classList.remove("level-up-notification");
+        levelStatElement.removeEventListener("click", clickHandler);
+        showCharacterPopup();
       };
-      levelElement.addEventListener("click", clickHandler);
-      levelElement.style.cursor = "pointer";
+      levelStatElement.addEventListener("click", clickHandler);
+      levelStatElement.style.cursor = "pointer";
     }
   }
 
-  function showLevelUpPopup() {
-    const popup = document.getElementById("level-up-popup") as HTMLDivElement;
+  function showCharacterPopup() {
+    const popup = document.getElementById("character-popup") as HTMLDivElement;
     if (!popup) return;
 
-    popup.style.display = "flex";
+    // Update character info
+    updateCharacterInfo();
+
+    // Update stat info
     updateLevelUpPopup();
+
+    popup.style.display = "flex";
   }
 
-  function hideLevelUpPopup() {
-    const popup = document.getElementById("level-up-popup") as HTMLDivElement;
+  function hideCharacterPopup() {
+    const popup = document.getElementById("character-popup") as HTMLDivElement;
     if (!popup) return;
 
     // Remove blinking effect
-    const levelElement = hudLevelElement;
-    if (levelElement) {
-      levelElement.classList.remove("level-up-notification");
+    const levelStatElement = document.getElementById("level-stat");
+    if (levelStatElement) {
+      levelStatElement.classList.remove("level-up-notification");
     }
 
     popup.style.display = "none";
@@ -1279,19 +1816,11 @@ function startGame(
       maxTargetsBtn.addEventListener("click", () => addStatPoint("maxTargets"));
     }
 
-    // Confirm and cancel buttons
-    const confirmBtn = document.getElementById("level-up-confirm");
-    const cancelBtn = document.getElementById("level-up-cancel");
-
-    if (confirmBtn) {
-      confirmBtn.addEventListener("click", () => {
-        hideLevelUpPopup();
-        updateHud();
-      });
-    }
-    if (cancelBtn) {
-      cancelBtn.addEventListener("click", () => {
-        hideLevelUpPopup();
+    // Character popup close button
+    const characterCloseBtn = document.getElementById("character-close");
+    if (characterCloseBtn) {
+      characterCloseBtn.addEventListener("click", () => {
+        hideCharacterPopup();
         // If there are still stat points, show notification again
         if (state.playerStats.statPoints > 0) {
           showLevelUpNotification();
@@ -1300,11 +1829,11 @@ function startGame(
     }
 
     // Click outside to close
-    const popup = document.getElementById("level-up-popup");
+    const popup = document.getElementById("character-popup");
     if (popup) {
       popup.addEventListener("click", (e) => {
         if (e.target === popup) {
-          hideLevelUpPopup();
+          hideCharacterPopup();
           // If there are still stat points, show notification again
           if (state.playerStats.statPoints > 0) {
             showLevelUpNotification();
@@ -1368,6 +1897,55 @@ function startGame(
     // Update gold display
     if (hudGoldElement) {
       hudGoldElement.textContent = String(state.stats.gold);
+    }
+  }
+
+  function updateCharacterInfo() {
+    const playerStats = state.playerStats;
+
+    // Update character level
+    const characterLevelEl = document.getElementById("character-level");
+    if (characterLevelEl) {
+      characterLevelEl.textContent = String(playerStats.level);
+    }
+
+    // Update character exp
+    const characterExpEl = document.getElementById("character-exp");
+    if (characterExpEl) {
+      if (playerStats.level >= MAX_LEVEL) {
+        characterExpEl.textContent = "MAX";
+      } else {
+        characterExpEl.textContent = `${playerStats.exp}/${playerStats.expToNext}`;
+      }
+    }
+
+    // Update character gold
+    const characterGoldEl = document.getElementById("character-gold");
+    if (characterGoldEl) {
+      characterGoldEl.textContent = String(state.stats.gold);
+    }
+
+    // Update equipped items display
+    updateEquippedItemsDisplay();
+  }
+
+  function updateEquippedItemsDisplay() {
+    const weaponEl = document.getElementById("equipped-weapon");
+    const helmetEl = document.getElementById("equipped-helmet");
+    const armorEl = document.getElementById("equipped-armor");
+    const shoesEl = document.getElementById("equipped-shoes");
+
+    if (weaponEl) {
+      weaponEl.textContent = state.equippedItems.weapon?.name || "없음";
+    }
+    if (helmetEl) {
+      helmetEl.textContent = state.equippedItems.helmet?.name || "없음";
+    }
+    if (armorEl) {
+      armorEl.textContent = state.equippedItems.armor?.name || "없음";
+    }
+    if (shoesEl) {
+      shoesEl.textContent = state.equippedItems.shoes?.name || "없음";
     }
   }
 
@@ -1516,6 +2094,419 @@ function startGame(
         closeBtn.removeEventListener("click", onClose);
       };
       closeBtn.addEventListener("click", onClose);
+    }
+  }
+
+  // ------------------------------
+  // Tab System
+  // ------------------------------
+  function switchTab(
+    tabName: "character" | "inventory" | "gacha" | "enhancement"
+  ) {
+    // Update active tab
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.classList.remove("active");
+    });
+
+    const activeTab = document.getElementById(`${tabName}-tab`);
+    if (activeTab) {
+      activeTab.classList.add("active");
+    }
+
+    state.currentTab = tabName;
+  }
+
+  // ------------------------------
+  // Gacha System
+  // ------------------------------
+  function generateEquipment(
+    grade: EquipmentGrade,
+    type: EquipmentType
+  ): Equipment {
+    const equipmentNames = {
+      weapon: {
+        S: ["전설의 검", "신의 창", "마법의 지팡이"],
+        A: ["명검", "강화된 도끼", "마법 검"],
+        B: ["철검", "강철 도끼", "마법 지팡이"],
+        C: ["나무 검", "구리 도끼", "단순한 지팡이"],
+        D: ["나무 막대", "돌 도끼", "약한 지팡이"],
+      },
+      helmet: {
+        S: ["전설의 투구", "신의 관", "마법의 모자"],
+        A: ["명장의 투구", "강화된 헬멧", "마법 모자"],
+        B: ["철 투구", "강철 헬멧", "마법 모자"],
+        C: ["가죽 모자", "구리 헬멧", "단순한 모자"],
+        D: ["천 모자", "나무 헬멧", "약한 모자"],
+      },
+      armor: {
+        S: ["전설의 갑옷", "신의 로브", "마법의 갑옷"],
+        A: ["명장의 갑옷", "강화된 갑옷", "마법 로브"],
+        B: ["철 갑옷", "강철 갑옷", "마법 갑옷"],
+        C: ["가죽 갑옷", "구리 갑옷", "단순한 로브"],
+        D: ["천 갑옷", "나무 갑옷", "약한 로브"],
+      },
+      shoes: {
+        S: ["전설의 신발", "신의 부츠", "마법의 신발"],
+        A: ["명장의 신발", "강화된 부츠", "마법 신발"],
+        B: ["철 신발", "강철 부츠", "마법 신발"],
+        C: ["가죽 신발", "구리 부츠", "단순한 신발"],
+        D: ["천 신발", "나무 부츠", "약한 신발"],
+      },
+    };
+
+    const names = equipmentNames[type][grade];
+    const name = names[Math.floor(Math.random() * names.length)];
+
+    // Generate stats based on grade
+    const baseStats = {
+      S: { attackPower: 20, attackSpeed: 15, maxTargets: 2 },
+      A: { attackPower: 15, attackSpeed: 10, maxTargets: 1 },
+      B: { attackPower: 10, attackSpeed: 8, maxTargets: 0 },
+      C: { attackPower: 5, attackSpeed: 5, maxTargets: 0 },
+      D: { attackPower: 2, attackSpeed: 2, maxTargets: 0 },
+    };
+
+    const stats = { ...baseStats[grade] };
+
+    // Randomize stats slightly
+    Object.keys(stats).forEach((key) => {
+      const statKey = key as keyof typeof stats;
+      if (stats[statKey] > 0) {
+        stats[statKey] = Math.max(
+          1,
+          stats[statKey] + Math.floor(Math.random() * 3) - 1
+        );
+      }
+    });
+
+    return {
+      id: `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name,
+      grade,
+      type,
+      stats,
+      equipped: false,
+    };
+  }
+
+  function performGacha(count: number): GachaResult {
+    const cost = count === 1 ? 10 : 10; // 11연차도 10 재화
+
+    if (state.gachaCurrency < cost) {
+      return { equipment: [], totalCost: 0 };
+    }
+
+    state.gachaCurrency -= cost;
+    const equipment: Equipment[] = [];
+
+    // Gacha rates: S: 5%, A: 10%, B: 30%, C: 30%, D: 25%
+    const rates = { S: 5, A: 10, B: 30, C: 30, D: 25 };
+    const equipmentTypes: EquipmentType[] = [
+      "weapon",
+      "helmet",
+      "armor",
+      "shoes",
+    ];
+
+    // For 11-draw, guarantee at least one A grade
+    const guaranteedA = count === 11;
+    let hasA = false;
+
+    for (let i = 0; i < count; i++) {
+      let grade: EquipmentGrade = "D"; // Default fallback
+
+      if (guaranteedA && i === count - 1 && !hasA) {
+        // Last draw and no A grade yet, force A grade
+        grade = "A";
+      } else {
+        const random = Math.random() * 100;
+        let cumulative = 0;
+
+        for (const [g, rate] of Object.entries(rates)) {
+          cumulative += rate;
+          if (random <= cumulative) {
+            grade = g as EquipmentGrade;
+            break;
+          }
+        }
+      }
+
+      if (grade === "A") hasA = true;
+
+      const type =
+        equipmentTypes[Math.floor(Math.random() * equipmentTypes.length)];
+      const newEquipment = generateEquipment(grade, type);
+      equipment.push(newEquipment);
+      state.equipment.push(newEquipment);
+    }
+
+    updateGachaCurrency();
+    return { equipment, totalCost: cost };
+  }
+
+  function updateGachaCurrency() {
+    const currencyEl = document.getElementById("gacha-currency-value");
+    if (currencyEl) {
+      currencyEl.textContent = String(state.gachaCurrency);
+    }
+  }
+
+  function showGachaPopup() {
+    const popup = document.getElementById("gacha-popup") as HTMLDivElement;
+    if (!popup) return;
+
+    updateGachaCurrency();
+    popup.style.display = "flex";
+  }
+
+  function hideGachaPopup() {
+    const popup = document.getElementById("gacha-popup") as HTMLDivElement;
+    if (!popup) return;
+    popup.style.display = "none";
+  }
+
+  function displayGachaResults(results: GachaResult) {
+    const resultsEl = document.getElementById("gacha-results");
+    if (!resultsEl) return;
+
+    resultsEl.innerHTML = "";
+
+    if (results.equipment.length === 0) {
+      resultsEl.innerHTML =
+        "<div class='no-currency'>가챠 재화가 부족합니다!</div>";
+      return;
+    }
+
+    results.equipment.forEach((equipment) => {
+      const itemEl = document.createElement("div");
+      itemEl.className = `gacha-item grade-${equipment.grade.toLowerCase()}`;
+      itemEl.innerHTML = `
+        <div class="item-grade">${equipment.grade}</div>
+        <div class="item-name">${equipment.name}</div>
+        <div class="item-type">${getEquipmentTypeName(equipment.type)}</div>
+        <div class="item-stats">
+          ${
+            equipment.stats.attackPower
+              ? `공격력 +${equipment.stats.attackPower} `
+              : ""
+          }
+          ${
+            equipment.stats.attackSpeed
+              ? `공격속도 +${equipment.stats.attackSpeed}% `
+              : ""
+          }
+          ${
+            equipment.stats.maxTargets
+              ? `타겟수 +${equipment.stats.maxTargets} `
+              : ""
+          }
+        </div>
+      `;
+      resultsEl.appendChild(itemEl);
+    });
+  }
+
+  function getEquipmentTypeName(type: EquipmentType): string {
+    const names = {
+      weapon: "무기",
+      helmet: "모자",
+      armor: "방어구",
+      shoes: "신발",
+    };
+    return names[type];
+  }
+
+  // ------------------------------
+  // Inventory System
+  // ------------------------------
+  function showInventoryPopup() {
+    const popup = document.getElementById("inventory-popup") as HTMLDivElement;
+    if (!popup) return;
+
+    updateInventoryDisplay();
+    popup.style.display = "flex";
+  }
+
+  function hideInventoryPopup() {
+    const popup = document.getElementById("inventory-popup") as HTMLDivElement;
+    if (!popup) return;
+    popup.style.display = "none";
+  }
+
+  function updateInventoryDisplay() {
+    const gridEl = document.getElementById("equipment-grid");
+    if (!gridEl) return;
+
+    gridEl.innerHTML = "";
+
+    if (state.equipment.length === 0) {
+      gridEl.innerHTML =
+        "<div class='no-equipment'>장비가 없습니다. 가챠에서 뽑아보세요!</div>";
+      return;
+    }
+
+    // Sort equipment based on current sort setting
+    const sortedEquipment = [...state.equipment].sort((a, b) => {
+      if (state.inventorySortBy === "grade") {
+        const gradeOrder = { S: 5, A: 4, B: 3, C: 2, D: 1 };
+        return gradeOrder[b.grade] - gradeOrder[a.grade];
+      } else {
+        // acquired order (by ID, which includes timestamp)
+        return b.id.localeCompare(a.id);
+      }
+    });
+
+    sortedEquipment.forEach((equipment) => {
+      const itemEl = document.createElement("div");
+      itemEl.className = `equipment-item grade-${equipment.grade.toLowerCase()} ${
+        equipment.equipped ? "equipped" : ""
+      }`;
+      itemEl.innerHTML = `
+        <div class="item-grade">${equipment.grade}</div>
+        <div class="item-name">${equipment.name}</div>
+        <div class="item-type">${getEquipmentTypeName(equipment.type)}</div>
+        <div class="item-stats">
+          ${
+            equipment.stats.attackPower
+              ? `공격력 +${equipment.stats.attackPower} `
+              : ""
+          }
+          ${
+            equipment.stats.attackSpeed
+              ? `공격속도 +${equipment.stats.attackSpeed}% `
+              : ""
+          }
+          ${
+            equipment.stats.maxTargets
+              ? `타겟수 +${equipment.stats.maxTargets} `
+              : ""
+          }
+        </div>
+        <div class="item-actions">
+          <button class="equip-btn" data-equipment-id="${equipment.id}">
+            ${equipment.equipped ? "해제" : "장착"}
+          </button>
+        </div>
+      `;
+      gridEl.appendChild(itemEl);
+    });
+
+    // Add event listeners to equip buttons
+    const equipButtons = gridEl.querySelectorAll(".equip-btn");
+    equipButtons.forEach((button) => {
+      button.addEventListener("click", (e) => {
+        const equipmentId = (e.target as HTMLButtonElement).getAttribute(
+          "data-equipment-id"
+        );
+        if (equipmentId) {
+          toggleEquipment(equipmentId);
+        }
+      });
+    });
+  }
+
+  function toggleEquipment(equipmentId: string) {
+    const equipment = state.equipment.find((eq) => eq.id === equipmentId);
+    if (!equipment) return;
+
+    if (equipment.equipped) {
+      // Unequip
+      equipment.equipped = false;
+      state.equippedItems[equipment.type] = null;
+    } else {
+      // Equip - first unequip any existing item of the same type
+      const existingItem = state.equippedItems[equipment.type];
+      if (existingItem) {
+        existingItem.equipped = false;
+      }
+
+      equipment.equipped = true;
+      state.equippedItems[equipment.type] = equipment;
+    }
+
+    updateInventoryDisplay();
+    updateCharacterEquipmentDisplay();
+  }
+
+  function updateCharacterEquipmentDisplay() {
+    // This will be called to update the character popup to show equipped items
+    // For now, we'll just update the stats
+    updatePlayerStatsFromEquipment();
+  }
+
+  function updatePlayerStatsFromEquipment() {
+    // Reset base stats
+    state.playerStats.attackSpeed = 0;
+    state.playerStats.attackPower = 0;
+    state.playerStats.maxTargets = 1;
+
+    // Add equipment bonuses
+    Object.values(state.equippedItems).forEach((equipment) => {
+      if (equipment) {
+        if (equipment.stats.attackSpeed) {
+          state.playerStats.attackSpeed += equipment.stats.attackSpeed;
+        }
+        if (equipment.stats.attackPower) {
+          state.playerStats.attackPower += equipment.stats.attackPower;
+        }
+        if (equipment.stats.maxTargets) {
+          state.playerStats.maxTargets += equipment.stats.maxTargets;
+        }
+      }
+    });
+
+    updateHud();
+  }
+
+  // Setup gacha and inventory event listeners
+  function setupGachaAndInventoryListeners() {
+    // Gacha buttons
+    const singleGachaBtn = document.getElementById("single-gacha");
+    const multiGachaBtn = document.getElementById("multi-gacha");
+    const gachaCloseBtn = document.getElementById("gacha-close");
+
+    if (singleGachaBtn) {
+      singleGachaBtn.addEventListener("click", () => {
+        const results = performGacha(1);
+        displayGachaResults(results);
+      });
+    }
+
+    if (multiGachaBtn) {
+      multiGachaBtn.addEventListener("click", () => {
+        const results = performGacha(11);
+        displayGachaResults(results);
+      });
+    }
+
+    if (gachaCloseBtn) {
+      gachaCloseBtn.addEventListener("click", hideGachaPopup);
+    }
+
+    // Inventory close button
+    const inventoryCloseBtn = document.getElementById("inventory-close");
+    if (inventoryCloseBtn) {
+      inventoryCloseBtn.addEventListener("click", hideInventoryPopup);
+    }
+
+    // Click outside to close popups
+    const gachaPopup = document.getElementById("gacha-popup");
+    const inventoryPopup = document.getElementById("inventory-popup");
+
+    if (gachaPopup) {
+      gachaPopup.addEventListener("click", (e) => {
+        if (e.target === gachaPopup) {
+          hideGachaPopup();
+        }
+      });
+    }
+
+    if (inventoryPopup) {
+      inventoryPopup.addEventListener("click", (e) => {
+        if (e.target === inventoryPopup) {
+          hideInventoryPopup();
+        }
+      });
     }
   }
 }
